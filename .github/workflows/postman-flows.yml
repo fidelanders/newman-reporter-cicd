@@ -24,8 +24,8 @@ jobs:
 
       - name: Run Postman Collection
         run: |
-          newman run tests/postman/MyCollection.postman_collection.json \
-            -e tests/postman/MyEnvironment.postman_environment.json \
+          newman run tests/postman/DandysApp_API.postman_collection.json \
+            # -e tests/postman/MyEnvironment.postman_environment.json \
             --reporters cli,html,json \
             --reporter-html-export newman-report.html \
             --reporter-json-export newman-report.json
