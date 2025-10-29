@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout the repository
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -25,10 +25,10 @@ jobs:
       - name: Install Newman
         run: npm install -g newman
 
-      # 4️⃣ Run Postman Collection (continue even if tests fail)
+      # 4️⃣ Run Postman Collection (ignore failures)
       - name: Run Postman Collection
         run: |
-          set +e  # Continue even if tests fail
+          set +e
           newman run tests/postman/DandysApp_API.postman_collection.json \
             --reporters cli,html,json \
             --reporter-html-export ./newman-report.html \
@@ -36,14 +36,15 @@ jobs:
           echo "Newman run finished (exit code ignored)"
           set -e
 
-      # 5️⃣ Debug: confirm files exist
-      - name: Debug reports
+      # 5️⃣ Debug: check reports
+      - name: Debug Newman reports
         run: |
-          echo "📂 Listing repo root contents:"
           ls -l
+          [ -f ./newman-report.html ] && echo "✅ HTML report exists" || echo "⚠️ missing"
+          [ -f ./newman-report.json ] && echo "✅ JSON report exists" || echo "⚠️ missing"
 
       # 6️⃣ Upload reports as artifacts
-      - name: Upload Newman Reports as Artifacts
+      - name: Upload Newman Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -52,25 +53,22 @@ jobs:
             newman-report.html
             newman-report.json
 
-      # 7️⃣ Publish to gh-pages
-      - name: Publish Reports to gh-pages with History + Index
+      # 7️⃣ Publish to gh-pages using PAT
+      - name: Publish Reports to gh-pages (PAT)
         if: always()
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # Personal Access Token with repo permissions
         run: |
-          # Configure Git identity
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          # Timestamp
           timestamp=$(date +'%Y%m%d%H%M%S')
 
-          # Temporary folder for safe copying
           mkdir -p temp_reports
-          [ -f ./newman-report.html ] && cp ./newman-report.html temp_reports/ || echo "⚠️ newman-report.html missing"
-          [ -f ./newman-report.json ] && cp ./newman-report.json temp_reports/ || echo "⚠️ newman-report.json missing"
+          [ -f ./newman-report.html ] && cp ./newman-report.html temp_reports/
+          [ -f ./newman-report.json ] && cp ./newman-report.json temp_reports/
 
-          # Fetch or create gh-pages branch
+          # Check if gh-pages exists on remote
           if git ls-remote --exit-code --heads origin gh-pages; then
             git fetch origin gh-pages
             git checkout gh-pages
@@ -78,19 +76,17 @@ jobs:
             git checkout --orphan gh-pages
             git rm -rf .
             git commit --allow-empty -m "Initial gh-pages commit"
-            git push origin gh-pages
+            git push https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }} gh-pages --force
           fi
 
-          # Ensure reports directory exists
           mkdir -p reports
 
-          # Copy reports into historical + latest files
           [ -f temp_reports/newman-report.html ] && cp temp_reports/newman-report.html reports/${timestamp}-report.html
           [ -f temp_reports/newman-report.json ] && cp temp_reports/newman-report.json reports/${timestamp}-report.json
           [ -f temp_reports/newman-report.html ] && cp temp_reports/newman-report.html index.html
           [ -f temp_reports/newman-report.json ] && cp temp_reports/newman-report.json latest-report.json
 
-          # Metadata for dashboard
+          # Metadata
           echo "Generated: $(date)" > reports/${timestamp}-meta.txt
           echo "Commit: ${{ github.sha }}" >> reports/${timestamp}-meta.txt
           echo "Branch: ${{ github.ref_name }}" >> reports/${timestamp}-meta.txt
@@ -100,7 +96,6 @@ jobs:
           echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Postman Test Report History</title>" > reports/index.html
           echo "<style>body{font-family:Arial;margin:40px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:8px;}th{background:#007bff;color:white;}tr:nth-child(even){background:#f2f2f2;}tr:hover{background:#ddd;}</style>" >> reports/index.html
           echo "<h2>📊 Postman Test Report History</h2><p>Generated automatically by GitHub Actions.</p><table><tr><th>Date</th><th>Report</th><th>JSON</th><th>Metadata</th></tr>" >> reports/index.html
-
           for file in $(ls reports/*-report.html | sort -r); do
             base=$(basename "$file" -report.html)
             dt=$(date -d "${base}" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$base")
@@ -108,13 +103,13 @@ jobs:
           done
           echo "</table><p><a href='../index.html'>View Latest Report</a></p></body></html>" >> reports/index.html
 
-          # Commit and push only if there are changes
+          # Commit & push
           git add index.html latest-report.json reports/
           if git diff-index --quiet HEAD --; then
             echo "No changes to commit"
           else
             git commit -m "Add Postman report for run ${timestamp} [skip ci]"
-            git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }} gh-pages --force
+            git push https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }} gh-pages --force
           fi
 
           echo "✅ Reports published: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
