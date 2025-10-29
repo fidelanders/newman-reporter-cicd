@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout source
+      # 1️⃣ Checkout the source repository
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -25,15 +25,24 @@ jobs:
       - name: Install Newman
         run: npm install -g newman
 
-      # 4️⃣ Run Postman Collection (continue even on failure)
+      # 4️⃣ Run Postman Collection (continue even if tests fail)
       - name: Run Postman Collection
         run: |
+          set +e  # Disable exit on error
           newman run tests/postman/DandysApp_API.postman_collection.json \
             --reporters cli,html,json \
             --reporter-html-export newman-report.html \
-            --reporter-json-export newman-report.json || true
+            --reporter-json-export newman-report.json
+          echo "Newman run finished (exit code ignored)"
+          set -e  # Re-enable exit on error
 
-      # 5️⃣ Upload reports as build artifacts (always runs)
+      # 5️⃣ Debug: list files to confirm reports exist
+      - name: Debug reports
+        run: |
+          echo "📂 Current directory contents:"
+          ls -R
+
+      # 6️⃣ Upload reports as build artifacts (always runs)
       - name: Upload Newman Reports as Artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -43,8 +52,8 @@ jobs:
             newman-report.html
             newman-report.json
 
-      # 6️⃣ Publish to gh-pages branch with timestamp history
-      - name: Publish Reports to gh-pages (with history)
+      # 7️⃣ Publish reports with history and auto-generated index
+      - name: Publish Reports to gh-pages with History + Index
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -53,22 +62,22 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
-          # Prepare timestamp
+          # Timestamp for unique report naming
           timestamp=$(date +'%Y%m%d%H%M%S')
 
-          # Copy reports to a temporary folder before switching branches
+          # Temporary storage before branch switch
           mkdir temp_reports
-          cp newman-report.html temp_reports/
-          cp newman-report.json temp_reports/
+          cp ./newman-report.html temp_reports/ || echo "⚠️ newman-report.html not found"
+          cp ./newman-report.json temp_reports/ || echo "⚠️ newman-report.json not found"
 
           # Checkout or create gh-pages branch
           git fetch origin gh-pages || echo "No gh-pages branch yet"
           git checkout gh-pages || git checkout --orphan gh-pages
 
-          # Make sure 'reports' directory exists
+          # Ensure directories exist
           mkdir -p reports
 
-          # Copy files from temp into gh-pages working dir
+          # Copy reports into historical and latest files
           cp temp_reports/newman-report.html reports/${timestamp}-report.html
           cp temp_reports/newman-report.json reports/${timestamp}-report.json
           cp temp_reports/newman-report.html index.html
@@ -80,9 +89,23 @@ jobs:
           echo "Branch: ${{ github.ref_name }}" >> reports/${timestamp}-meta.txt
           echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> reports/${timestamp}-meta.txt
 
-          # Commit and push
+          # Auto-generate report history index
+          echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Postman Test Report History</title>" > reports/index.html
+          echo "<style>body{font-family:Arial;margin:40px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:8px;}th{background:#007bff;color:white;}tr:nth-child(even){background:#f2f2f2;}tr:hover{background:#ddd;}</style>" >> reports/index.html
+          echo "<h2>📊 Postman Test Report History</h2><p>Generated automatically by GitHub Actions.</p><table><tr><th>Date</th><th>Report</th><th>JSON</th><th>Metadata</th></tr>" >> reports/index.html
+
+          for file in $(ls reports/*-report.html | sort -r); do
+            base=$(basename "$file" -report.html)
+            dt=$(date -d "${base}" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$base")
+            echo "<tr><td>${dt}</td><td><a href='${base}-report.html'>HTML Report</a></td><td><a href='${base}-report.json'>JSON</a></td><td><a href='${base}-meta.txt'>Meta</a></td></tr>" >> reports/index.html
+          done
+
+          echo "</table><p><a href='../index.html'>View Latest Report</a></p></body></html>" >> reports/index.html
+
+          # Stage and push updates
           git add index.html latest-report.json reports/
           git commit -m "Add Postman report for run ${timestamp} [skip ci]" || echo "No changes to commit"
           git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }} gh-pages --force
 
           echo "✅ Reports published to: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
+          echo "🗂 History page: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/reports/"
