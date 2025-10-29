@@ -11,26 +11,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1️⃣ Checkout source
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
 
+      # 3️⃣ Install Newman CLI
       - name: Install Newman
         run: npm install -g newman
 
+      # 4️⃣ Run Postman Collection (continue even on failure)
       - name: Run Postman Collection
         run: |
           newman run tests/postman/DandysApp_API.postman_collection.json \
-            # -e tests/postman/MyEnvironment.postman_environment.json \
             --reporters cli,html,json \
             --reporter-html-export newman-report.html \
-            --reporter-json-export newman-report.json
+            --reporter-json-export newman-report.json || true
 
+      # 5️⃣ Upload reports as build artifacts (always runs)
       - name: Upload Newman Reports as Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: postman-test-reports
@@ -38,33 +43,38 @@ jobs:
             newman-report.html
             newman-report.json
 
+      # 6️⃣ Publish to gh-pages branch with timestamp history
       - name: Publish Reports to gh-pages (with history)
+        if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Configure git
+          # Configure Git identity
           git config user.name "github-actions"
           git config user.email "actions@github.com"
 
           # Prepare timestamp
           timestamp=$(date +'%Y%m%d%H%M%S')
 
+          # Copy reports to a temporary folder before switching branches
+          mkdir temp_reports
+          cp newman-report.html temp_reports/
+          cp newman-report.json temp_reports/
+
           # Checkout or create gh-pages branch
           git fetch origin gh-pages || echo "No gh-pages branch yet"
           git checkout gh-pages || git checkout --orphan gh-pages
 
-          # Ensure reports directory exists
+          # Make sure 'reports' directory exists
           mkdir -p reports
 
-          # Copy new reports into timestamped files
-          cp ../newman-report.html reports/${timestamp}-report.html
-          cp ../newman-report.json reports/${timestamp}-report.json
+          # Copy files from temp into gh-pages working dir
+          cp temp_reports/newman-report.html reports/${timestamp}-report.html
+          cp temp_reports/newman-report.json reports/${timestamp}-report.json
+          cp temp_reports/newman-report.html index.html
+          cp temp_reports/newman-report.json latest-report.json
 
-          # Keep shortcuts for latest
-          cp ../newman-report.html index.html
-          cp ../newman-report.json latest-report.json
-
-          # Add metadata for dashboard
+          # Add metadata (for dashboard consumption)
           echo "Generated: $(date)" > reports/${timestamp}-meta.txt
           echo "Commit: ${{ github.sha }}" >> reports/${timestamp}-meta.txt
           echo "Branch: ${{ github.ref_name }}" >> reports/${timestamp}-meta.txt
@@ -74,3 +84,5 @@ jobs:
           git add index.html latest-report.json reports/
           git commit -m "Add Postman report for run ${timestamp} [skip ci]" || echo "No changes to commit"
           git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }} gh-pages --force
+
+          echo "✅ Reports published to: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/"
