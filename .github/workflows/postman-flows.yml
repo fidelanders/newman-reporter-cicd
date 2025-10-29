@@ -36,12 +36,13 @@ jobs:
           echo "Newman run finished (exit code ignored)"
           set -e
 
-      # 5️⃣ Debug: check reports
+      # 5️⃣ Debug: check report files
       - name: Debug Newman reports
         run: |
+          echo "📂 Listing repo root files:"
           ls -l
-          [ -f ./newman-report.html ] && echo "✅ HTML report exists" || echo "⚠️ missing"
-          [ -f ./newman-report.json ] && echo "✅ JSON report exists" || echo "⚠️ missing"
+          [ -f ./newman-report.html ] && echo "✅ HTML report exists" || echo "⚠️ HTML report missing"
+          [ -f ./newman-report.json ] && echo "✅ JSON report exists" || echo "⚠️ JSON report missing"
 
       # 6️⃣ Upload reports as artifacts
       - name: Upload Newman Reports
@@ -53,8 +54,8 @@ jobs:
             newman-report.html
             newman-report.json
 
-      # 7️⃣ Publish to gh-pages using PAT
-      - name: Publish Reports to gh-pages (PAT)
+      # 7️⃣ Publish to gh-pages with PAT (Foolproof)
+      - name: Publish Reports to gh-pages
         if: always()
         env:
           PAT_TOKEN: ${{ secrets.PAT_TOKEN }}  # Personal Access Token with repo permissions
@@ -64,11 +65,12 @@ jobs:
 
           timestamp=$(date +'%Y%m%d%H%M%S')
 
+          # Ensure temp folder exists
           mkdir -p temp_reports
           [ -f ./newman-report.html ] && cp ./newman-report.html temp_reports/
           [ -f ./newman-report.json ] && cp ./newman-report.json temp_reports/
 
-          # Check if gh-pages exists on remote
+          # Check if gh-pages exists remotely
           if git ls-remote --exit-code --heads origin gh-pages; then
             git fetch origin gh-pages
             git checkout gh-pages
@@ -79,31 +81,33 @@ jobs:
             git push https://x-access-token:${PAT_TOKEN}@github.com/${{ github.repository }} gh-pages --force
           fi
 
+          # Ensure reports folder exists
           mkdir -p reports
 
+          # Copy reports safely (only if they exist)
           [ -f temp_reports/newman-report.html ] && cp temp_reports/newman-report.html reports/${timestamp}-report.html
           [ -f temp_reports/newman-report.json ] && cp temp_reports/newman-report.json reports/${timestamp}-report.json
           [ -f temp_reports/newman-report.html ] && cp temp_reports/newman-report.html index.html
           [ -f temp_reports/newman-report.json ] && cp temp_reports/newman-report.json latest-report.json
 
-          # Metadata
+          # Add metadata safely
           echo "Generated: $(date)" > reports/${timestamp}-meta.txt
           echo "Commit: ${{ github.sha }}" >> reports/${timestamp}-meta.txt
           echo "Branch: ${{ github.ref_name }}" >> reports/${timestamp}-meta.txt
           echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> reports/${timestamp}-meta.txt
 
-          # Generate history index
+          # Auto-generate history index
           echo "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Postman Test Report History</title>" > reports/index.html
           echo "<style>body{font-family:Arial;margin:40px;}table{width:100%;border-collapse:collapse;}th,td{border:1px solid #ddd;padding:8px;}th{background:#007bff;color:white;}tr:nth-child(even){background:#f2f2f2;}tr:hover{background:#ddd;}</style>" >> reports/index.html
           echo "<h2>📊 Postman Test Report History</h2><p>Generated automatically by GitHub Actions.</p><table><tr><th>Date</th><th>Report</th><th>JSON</th><th>Metadata</th></tr>" >> reports/index.html
-          for file in $(ls reports/*-report.html | sort -r); do
+          for file in $(ls reports/*-report.html 2>/dev/null | sort -r); do
             base=$(basename "$file" -report.html)
             dt=$(date -d "${base}" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$base")
             echo "<tr><td>${dt}</td><td><a href='${base}-report.html'>HTML Report</a></td><td><a href='${base}-report.json'>JSON</a></td><td><a href='${base}-meta.txt'>Meta</a></td></tr>" >> reports/index.html
           done
           echo "</table><p><a href='../index.html'>View Latest Report</a></p></body></html>" >> reports/index.html
 
-          # Commit & push
+          # Commit & push only if changes exist
           git add index.html latest-report.json reports/
           if git diff-index --quiet HEAD --; then
             echo "No changes to commit"
