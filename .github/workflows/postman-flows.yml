@@ -1,0 +1,76 @@
+name: Run Postman Tests and Publish Historical Reports
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  postman-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Newman
+        run: npm install -g newman
+
+      - name: Run Postman Collection
+        run: |
+          newman run tests/postman/MyCollection.postman_collection.json \
+            -e tests/postman/MyEnvironment.postman_environment.json \
+            --reporters cli,html,json \
+            --reporter-html-export newman-report.html \
+            --reporter-json-export newman-report.json
+
+      - name: Upload Newman Reports as Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: postman-test-reports
+          path: |
+            newman-report.html
+            newman-report.json
+
+      - name: Publish Reports to gh-pages (with history)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Configure git
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          # Prepare timestamp
+          timestamp=$(date +'%Y%m%d%H%M%S')
+
+          # Checkout or create gh-pages branch
+          git fetch origin gh-pages || echo "No gh-pages branch yet"
+          git checkout gh-pages || git checkout --orphan gh-pages
+
+          # Ensure reports directory exists
+          mkdir -p reports
+
+          # Copy new reports into timestamped files
+          cp ../newman-report.html reports/${timestamp}-report.html
+          cp ../newman-report.json reports/${timestamp}-report.json
+
+          # Keep shortcuts for latest
+          cp ../newman-report.html index.html
+          cp ../newman-report.json latest-report.json
+
+          # Add metadata for dashboard
+          echo "Generated: $(date)" > reports/${timestamp}-meta.txt
+          echo "Commit: ${{ github.sha }}" >> reports/${timestamp}-meta.txt
+          echo "Branch: ${{ github.ref_name }}" >> reports/${timestamp}-meta.txt
+          echo "Run URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> reports/${timestamp}-meta.txt
+
+          # Commit and push
+          git add index.html latest-report.json reports/
+          git commit -m "Add Postman report for run ${timestamp} [skip ci]" || echo "No changes to commit"
+          git push https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }} gh-pages --force
